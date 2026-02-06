@@ -1,8 +1,9 @@
 -- PiviGames.lua for Project GLD
--- SteamRip-style integration using PlayPaste with automatic extraction
--- Version: 2.3.0 (Final, menú de carpeta visible)
+-- SteamRip-style integration using PlayPaste
+-- Compatible con HTML actual de pivigames.blog
+-- Version: 2.4.0
 
-local VERSION = "2.3.0"
+local VERSION = "2.4.0"
 client.auto_script_update(
     "https://raw.githubusercontent.com/jadelosantos/Lua/main/Pivigames.lua",
     VERSION
@@ -74,7 +75,8 @@ local function webScrapePiviGames(gameName)
     local results = {}
     local postMatches = {}
 
-    for link, title in string.gmatch(body, '<h2 class="post%-title">.-<a[^>]-href="(.-)"[^>]->(.-)</a>') do
+    -- Nuevo pattern para HTML actual
+    for link, title in string.gmatch(body, '<h2 class="entry%-title">.-<a href="(.-)"[^>]->(.-)</a>') do
         table.insert(postMatches, {link = link, title = title})
     end
 
@@ -96,7 +98,7 @@ local function webScrapePiviGames(gameName)
                 ScriptName = "PiviGames",
             }
 
-            -- Buscar todos los enlaces de PlayPaste y extraer enlaces finales
+            -- Extraer enlaces de PlayPaste
             for link in string.gmatch(page, 'href="(.-)"') do
                 if string.find(link, "playpaste.net/pivi?v=") then
                     local finalLinks = extractDownloadLinksFromPlayPaste(link)
@@ -151,7 +153,7 @@ if version < 6.95 then
 else
     Notifications.push_success("Lua Script", "PiviGames Script Loaded and Working")
 
-    -- Agregar menú visible para la carpeta de instalación
+    -- Menú visible para carpeta de instalación
     menu.add_input_text("PiviGames Game Dir")
     if menu.get_text("PiviGames Game Dir") == "" then
         menu.set_text("PiviGames Game Dir", defaultdir)
