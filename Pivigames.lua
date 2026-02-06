@@ -5,7 +5,7 @@
 
 local VERSION = "1.0.0"
 client.auto_script_update(
-    "https://raw.githubusercontent.com/TU_USUARIO/TU_REPO/main/PiviGames.lua",
+    "https://raw.githubusercontent.com/jadelosantos/Lua/main/Pivigames.lua",
     VERSION
 )
 
