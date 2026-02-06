@@ -1,9 +1,8 @@
 -- PiviGames.lua for Project GLD
--- Based on SteamRip script structure
--- Author: YOURD34TH style adaptation
--- Version: 1.0.0
+-- SteamRip-style integration using PlayPaste with automatic extraction
+-- Version: 2.3.0 (Final, menú de carpeta visible)
 
-local VERSION = "1.0.0"
+local VERSION = "2.3.0"
 client.auto_script_update(
     "https://raw.githubusercontent.com/jadelosantos/Lua/main/Pivigames.lua",
     VERSION
@@ -39,82 +38,102 @@ local function cleanName(name)
     return name
 end
 
+local function extractDownloadLinksFromPlayPaste(playpasteUrl)
+    local page = http.get(playpasteUrl, headers)
+    local links = {}
+
+    if not page or #page < 50 then
+        return links
+    end
+
+    for link in string.gmatch(page, 'href="(.-)"') do
+        if string.find(link, "mega%.nz") or
+           string.find(link, "mediafire%.com") or
+           string.find(link, "gofile%.io") or
+           string.find(link, "pixeldrain%.com") then
+            table.insert(links, link)
+        end
+    end
+
+    return links
+end
+
 --------------------------------------------------
 -- MAIN SCRAPER
 --------------------------------------------------
 local function webScrapePiviGames(gameName)
     gameName = cleanName(gameName)
-    local searchUrl =
-        "https://pivigames.blog/?s=" .. gameName:gsub(" ", "%%20")
-
+    local searchUrl = "https://pivigames.blog/?s=" .. gameName:gsub(" ", "%%20")
     local body = http.get(searchUrl, headers)
-    if not body then
+
+    if not body or #body < 100 then
+        Notifications.push_error("Lua Script", "No se pudo descargar la página o está vacía.")
         return {}
     end
 
     local results = {}
+    local postMatches = {}
 
-    -- Result links
-    local gameLinks = HtmlWrapper.findAttribute(
-        body,
-        "a",
-        "rel",
-        "bookmark",
-        "href"
-    )
+    for link, title in string.gmatch(body, '<h2 class="post%-title">.-<a[^>]-href="(.-)"[^>]->(.-)</a>') do
+        table.insert(postMatches, {link = link, title = title})
+    end
 
-    local gameTitles = HtmlWrapper.findAttribute(
-        body,
-        "h2",
-        "class",
-        "entry-title",
-        ""
-    )
+    if #postMatches == 0 then
+        Notifications.push_error("Lua Script", "No se encontraron resultados en la búsqueda.")
+        return {}
+    end
 
-    for i = 1, #gameLinks do
-        local page = http.get(gameLinks[i], headers)
+    for _, post in ipairs(postMatches) do
+        local page = http.get(post.link, headers)
         if page then
-            local title =
-                gameTitles[i] or "Unknown Game"
-
-            -- Try to extract size
-            local size =
-                string.match(page, "Tamaño del archivo.-:</strong>%s*(.-)<")
-                or ""
+            local title = post.title or "Unknown Game"
+            local size = string.match(page, "Tamaño del archivo.-:</strong>%s*(.-)<") or ""
 
             local gameResult = {
                 name = "[" .. size .. "] " .. title,
                 links = {},
                 tooltip = "Size: " .. size,
-                ScriptName = "PiviGames"
+                ScriptName = "PiviGames",
             }
 
-            -- Download links
-            local links = HtmlWrapper.findAttribute(
-                page,
-                "a",
-                "",
-                "",
-                "href"
-            )
-
-            for _, link in ipairs(links) do
-                if string.find(link, "mediafire")
-                    or string.find(link, "mega")
-                    or string.find(link, "pixeldrain")
-                    or string.find(link, "gofile")
-                then
-                    table.insert(gameResult.links, {
-                        name = "Download",
-                        link = link,
-                        addtodownloadlist = true
-                    })
+            -- Buscar todos los enlaces de PlayPaste y extraer enlaces finales
+            for link in string.gmatch(page, 'href="(.-)"') do
+                if string.find(link, "playpaste.net/pivi?v=") then
+                    local finalLinks = extractDownloadLinksFromPlayPaste(link)
+                    if #finalLinks > 0 then
+                        for _, fl in ipairs(finalLinks) do
+                            table.insert(gameResult.links, {
+                                name = "Download",
+                                link = fl,
+                                addtodownloadlist = true
+                            })
+                        end
+                    else
+                        table.insert(gameResult.links, {
+                            name = "Open PlayPaste",
+                            link = link,
+                            addtodownloadlist = false
+                        })
+                    end
                 end
             end
 
-            if #gameResult.links > 0 then
-                table.insert(results, gameResult)
+            -- Si no hay links, fallback al post
+            if #gameResult.links == 0 then
+                table.insert(gameResult.links, {
+                    name = "Open Post",
+                    link = post.link,
+                    addtodownloadlist = false
+                })
             end
+
+            -- Intentar obtener portada
+            local cover = string.match(page, '<img class="[^"]-wp-post-image"[^>]-src="(.-)"')
+            if cover then
+                gameResult.cover = { url = cover }
+            end
+
+            table.insert(results, gameResult)
         end
     end
 
@@ -125,28 +144,85 @@ end
 -- GLD INTEGRATION
 --------------------------------------------------
 local version = client.GetVersionDouble()
+local defaultdir = "C:/Games" -- Carpeta por defecto
 
 if version < 6.95 then
-    Notifications.push_error(
-        "Lua Script",
-        "Program is Outdated. Please Update to use this Script"
-    )
+    Notifications.push_error("Lua Script", "Program is Outdated. Please Update to use this Script")
 else
-    Notifications.push_success(
-        "Lua Script",
-        "PiviGames Script Loaded and Working"
-    )
+    Notifications.push_success("Lua Script", "PiviGames Script Loaded and Working")
 
-    local function onscriptselected()
+    -- Agregar menú visible para la carpeta de instalación
+    menu.add_input_text("PiviGames Game Dir")
+    if menu.get_text("PiviGames Game Dir") == "" then
+        menu.set_text("PiviGames Game Dir", defaultdir)
+    end
+    settings.load()
+
+    local imagelink = ""
+    local gamename = ""
+    local pathcheck = ""
+
+    local function onScriptSelected()
         if not cfcookie or cfcookie == "" then
             http.CloudFlareSolver("https://pivigames.blog/")
         else
-            local gameName = game.getgamename()
-            local results = webScrapePiviGames(gameName)
+            local gn = game.getgamename()
+            if not gn or gn == "" then
+                Notifications.push_error("Lua Script", "No game name provided!")
+                return
+            end
+            local results = webScrapePiviGames(gn)
             communication.receiveSearchResults(results)
         end
     end
 
-    client.add_callback("on_scriptselected", onscriptselected)
+    local function onDownloadClick(gamejson, downloadurl, scriptname)
+        local jsonResults = JsonWrapper.parse(gamejson)
+        gamename = jsonResults.name
+        local coverImageUrl = jsonResults["cover"] and jsonResults["cover"]["url"] or nil
+        if coverImageUrl and coverImageUrl:sub(1, 2) == "//" then
+            coverImageUrl = "https:" .. coverImageUrl
+        end
+        if coverImageUrl then
+            coverImageUrl = coverImageUrl:gsub("t_thumb", "t_cover_big")
+            imagelink = coverImageUrl
+        end
+    end
+
+    local function onDownloadCompleted(path, url)
+        path = path:gsub("\\", "/")
+        pathcheck = path
+        local gamedir = menu.get_text("PiviGames Game Dir") .. "/" .. gamename:gsub(":", "") .. "/"
+        zip.extract(path, gamedir, false)
+    end
+
+    local function onExtractionCompleted(origin, path)
+        if pathcheck == origin then
+            path = path:gsub("/", "\\")
+            local folders = file.listfolders(path)
+            local secondFolder = folders[1]
+            if secondFolder then
+                local fullFolderPath = path .. "\\" .. secondFolder
+                local executables = file.listexecutables(fullFolderPath)
+                if executables and #executables >= 1 then
+                    local firstExecutable = executables[1]
+                    local gameidl = GameLibrary.GetGameIdFromName(gamename)
+                    if gameidl == -1 then
+                        local imagePath = Download.DownloadImage(imagelink)
+                        GameLibrary.addGame(fullExecutablePath, imagePath, gamename, "")
+                        Notifications.push_success("PiviGames Script", "Game Successfully Installed!")
+                    else
+                        GameLibrary.changeGameinfo(gameidl, fullExecutablePath)
+                        Notifications.push_success("PiviGames Script", "Game Successfully Installed!")
+                    end
+                end
+            end
+        end
+    end
+
+    client.add_callback("on_scriptselected", onScriptSelected)
+    client.add_callback("on_downloadclick", onDownloadClick)
+    client.add_callback("on_downloadcompleted", onDownloadCompleted)
+    client.add_callback("on_extractioncompleted", onExtractionCompleted)
     client.add_callback("on_cfdone", cfcallback)
 end
